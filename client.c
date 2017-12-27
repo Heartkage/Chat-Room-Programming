@@ -9,9 +9,11 @@
 #include<sys/socket.h>
 #include<sys/select.h>
 #include<signal.h>
+#include<sys/stat.h>
+#include<sys/types.h>
 
 #define CODELEN 10
-#define MAXLINE 1000
+#define MAXLINE 100
 
 
 char value[MAXLINE];
@@ -48,6 +50,12 @@ int main(int argc, char *argv[]){
         exit(-3);
     }
 
+    //send client name to server
+    char temp[MAXLINE];
+    memset(temp, 0, MAXLINE);
+    strcpy(temp, argv[3]);
+    write(sockfd, temp, strlen(temp));
+    
     str_cli(sockfd);
         
     return 0;
@@ -59,6 +67,8 @@ void str_cli(int sockfd){
     fd_set rset;
     char input[MAXLINE];
     char output[MAXLINE];    
+
+    
 
     if(sockfd > fileno(stdin))
         maxfd = sockfd+1;
