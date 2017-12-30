@@ -91,7 +91,7 @@ int main(int argc, char *argv[]){
         to[i+HEADER] = argv[3][i];
     write(sockfd, to, (HEADER+strlen(argv[3])));
     
-    mkdir(route, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+    //mkdir(route, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
     
     printf("Welcome to the dropbox-like server!: %s\n", argv[3]);
 
@@ -217,6 +217,7 @@ void upload_file(int sockfd, int datafd){
     puts("");
     write(sockfd, msg, HEADER+strlen(value)+1+strlen(msg2));
     printf("Uploading file: %s\n", value);
+
     //warning
     read(sockfd, msg2, MSGLINE);  
 
@@ -248,7 +249,7 @@ void upload_file(int sockfd, int datafd){
         } 
     }
     printf("]\n");
-    
+    /*
     //send end of file
     memset(msg, 0, MSGLINE);
     strcpy(msg, "/end");
@@ -256,7 +257,7 @@ void upload_file(int sockfd, int datafd){
     for(i = 0; i < strlen(value); i++)
         msg[i+HEADER] = value[i];
     
-    write(sockfd, msg, strlen(value)+HEADER);
+    write(sockfd, msg, strlen(value)+HEADER);*/
     printf("Upload %s comeplete!\n", value);
 
     fclose(ifile);
@@ -270,9 +271,9 @@ void download_file(int sockfd, int datafd){
     char server_msg[MAXLINE];
     char temp_route[MSGLINE];
     memset(temp_route, 0, MSGLINE);
-    strcpy(temp_route, route);
-    strcat(temp_route, "/");
-    strcat(temp_route, value);
+    //strcpy(temp_route, route);
+    //strcat(temp_route, "/");
+    strcpy(temp_route, value);
 
     //write(sockfd, "ok", 2);
     

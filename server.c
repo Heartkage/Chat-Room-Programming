@@ -191,8 +191,9 @@ void tcp_ser(int listenfd, struct sockaddr* serverInfo, socklen_t len){
                                 strcpy(temp_route, client_ID[i].route);
                                 strcat(temp_route, "/");
                                 strcat(temp_route, client_box_status[j].file_name[k]);
-                                memset(client_ID[i].fname, 0, NAMELEN);
-                                strcpy(client_ID[i].fname, client_box_status[j].file_name[k]);
+                                /*memset(client_ID[i].fname, 0, NAMELEN);
+                                strcpy(client_ID[i].fname, client_box_status[j].file_name[k]);*/
+
                                 printf("[Send data directory] id = %d, data = %d, %s\n", i, client_ID[i].datafd, temp_route);
                                 if((client_ID[i].ifile=fopen(temp_route, "rb")) == NULL){
                                     printf("[Error] File open fail\n");
@@ -471,6 +472,8 @@ void tcp_ser(int listenfd, struct sockaddr* serverInfo, socklen_t len){
                                     
                                     fd_table[fileno(client_ID[i].ofile)] = false;
                                     printf("ofile close = %d\n", fclose(client_ID[i].ofile));
+                                    client_ID[i].ofile = NULL;
+                                    client_ID[i].f_end = true;
 
                                     //update box_status
                                     int temp_num = client_ID[i].box_num;
@@ -649,7 +652,8 @@ int msg_check(char *msg, int current, int num){
         else
             input2[i-HEADER] = msg[i];
     }
-        
+    
+    printf("current fd = %d\n", client_ID[current].fd);
     printf("(1):%s, ", input); 
     printf("(2):%s, ", input2);
     printf("(3):%s\n", input3);
@@ -665,7 +669,7 @@ int msg_check(char *msg, int current, int num){
         client_ID[current].total_size = atoi(input3);
         return 1;
     }
-    else if(!strcmp(input, codeword2)){
+   /* else if(!strcmp(input, codeword2)){
         if(!strcmp(input2, client_ID[current].fname))
             client_ID[current].f_end = true;
         else{ 
@@ -673,7 +677,7 @@ int msg_check(char *msg, int current, int num){
             exit(-8);
         }
         return 2;
-    }
+    }*/
     else if(!strcmp(input, codeword3)){
         int val;
         int num = atoi(input2);
@@ -685,11 +689,16 @@ int msg_check(char *msg, int current, int num){
         return 3;
     }
     else if(!strcmp(input, codeword4)){
-        if(!strcmp(input2, client_ID[current].fname)){
+
+        int temp_num = client_ID[current].box_num;
+        int temp_num2 = client_ID[current].file_num;
+        if(!strcmp(input2, client_box_status[temp_num].file_name[temp_num2])){
             printf("[Status] Recv, ok_to_open is on now\n");
             client_ID[current].ok_to_open = true;
         }
         else{
+            printf("%s\n", input2);
+            printf("%s\n", client_ID[current].fname);
             printf("[Error] Wrong file name\n");
             exit(-1);
         }
