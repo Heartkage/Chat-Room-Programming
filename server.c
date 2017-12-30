@@ -43,6 +43,7 @@ struct client_list{
     int total_read, f_total_read;
     int send_step;
     int file_size, f_total_send;
+
     bool f_end;
     bool ok_to_read;
     bool ok_to_open;
@@ -64,6 +65,7 @@ struct client_file{
 }client_box_status[MAX_CLI];
 
 int total_box = 0;
+bool fd_table[NUM_FILE];
 
 int main(int argc, char *argv[]){
     
@@ -167,14 +169,19 @@ void tcp_ser(int listenfd, struct sockaddr* serverInfo, socklen_t len){
     maxi = -1;
     maxfd = listenfd+1;
     
+    for(i = 0; i < NUM_FILE; i++)
+        fd_table[i] = false;
     
+    fd_table[listenfd] = true;
+
     while(1){
         FD_ZERO(&wset);
+        FD_ZERO(&rset);
         rset = allset;
 
         //open possible send file
         for(i = 0; i < MAX_CLI; i++){
-            if(client_ID[i].fd != -1){
+            if((client_ID[i].fd != -1)){
                 for(j = 0; j < total_box; j++){
                     if((!strcmp(client_ID[i].name, client_box_status[j].name)) && client_ID[i].ok_to_open){
                         for(k = 0; k < client_box_status[j].file_amount; k++){
@@ -184,11 +191,15 @@ void tcp_ser(int listenfd, struct sockaddr* serverInfo, socklen_t len){
                                 strcpy(temp_route, client_ID[i].route);
                                 strcat(temp_route, "/");
                                 strcat(temp_route, client_box_status[j].file_name[k]);
-                                printf("%s\n", temp_route);
+                                memset(client_ID[i].fname, 0, NAMELEN);
+                                strcpy(client_ID[i].fname, client_box_status[j].file_name[k]);
+                                printf("[Send data directory] id = %d, data = %d, %s\n", i, client_ID[i].datafd, temp_route);
                                 if((client_ID[i].ifile=fopen(temp_route, "rb")) == NULL){
                                     printf("[Error] File open fail\n");
                                     exit(-5);
                                 }  
+                                printf("fileno(ifile) = %d\n", fileno(client_ID[i].ifile));
+                                fd_table[fileno(client_ID[i].ifile)] = true;
 
                                 client_ID[i].file_num = k;
                                 client_ID[i].send_step = 0;
@@ -203,34 +214,47 @@ void tcp_ser(int listenfd, struct sockaddr* serverInfo, socklen_t len){
 
         //add possible socket to FD_SET
         for(i = 0; i < MAX_CLI; i++){
-            if(client_ID[i].fd != -1){
+            if((client_ID[i].fd != -1)){
                 if(client_ID[i].ok_to_read){
                     if(client_ID[i].friptr < (&client_ID[i].fr[MAXLINE])){
                         FD_SET(client_ID[i].datafd, &rset);
-                        if(client_ID[i].datafd > (maxfd-1))
-                            maxfd = client_ID[i].datafd+1;
+                        fd_table[client_ID[i].datafd] = true;
                     }
                 }
                 if(client_ID[i].friptr != client_ID[i].froptr){
                     FD_SET(fileno(client_ID[i].ofile), &wset);
-                    if(fileno(client_ID[i].ofile) > (maxfd-1))
-                        maxfd = fileno(client_ID[i].ofile)+1;
+                    fd_table[fileno(client_ID[i].ofile)] = true;
+                    /*if(fileno(client_ID[i].ofile) > (maxfd-1))
+                        maxfd = fileno(client_ID[i].ofile)+1;*/
                 } 
-                if(!client_ID[i].ok_to_open){
+                if(!client_ID[i].ok_to_open && (client_ID[i].ifile != NULL)){
                     FD_SET(fileno(client_ID[i].ifile), &rset);
-                    if(fileno(client_ID[i].ifile) > (maxfd-1))
-                        maxfd = fileno(client_ID[i].ifile)+1;
+                    fd_table[fileno(client_ID[i].ifile)] = true;
+                    //printf("i = %d\n", i);
+         
+                    /*if(fileno(client_ID[i].ifile) > (maxfd-1))
+                        maxfd = fileno(client_ID[i].ifile)+1;*/
                 }
-                if(((client_ID[i].toiptr-client_ID[i].tooptr) > 0) || (client_ID[i].send_step > 0)) {
+                if(((client_ID[i].toiptr-client_ID[i].tooptr) > 0)) {
+                    //printf("%d add datafd because %d data\n", i, (client_ID[i].toiptr-client_ID[i].tooptr));
                     FD_SET(client_ID[i].datafd, &wset);
-                    if(client_ID[i].datafd > (maxfd-1))
-                        maxfd = client_ID[i].datafd+1;
+                    fd_table[client_ID[i].datafd] = true;
+                    /*if(client_ID[i].datafd > (maxfd-1))
+                        maxfd = client_ID[i].datafd+1;*/
                 }
             }
         }
 
+        for(i = 0; i < NUM_FILE; i++){
+            if(fd_table[i] == true){
+                maxfd = i+1;
+            }
+        }
+
+        //printf("maxfd = %d\n", maxfd);
         nready = select(maxfd, &rset, &wset, NULL, NULL);
-             
+        //printf("%d\n", nready);
+
         while(nready > 0){
             int n, nwritten;
 
@@ -247,10 +271,9 @@ void tcp_ser(int listenfd, struct sockaddr* serverInfo, socklen_t len){
                 for(i = 0; i < MAX_CLI; i++){
                     if(client_ID[i].fd == -1){
                         client_ID[i].fd = connfd;
-                        //set socket to nonblocking
                         
-                        if(connfd > (maxfd-1))
-                            maxfd = connfd+1;
+                        /*if(connfd > (maxfd-1))
+                            maxfd = connfd+1;*/
                         if(i > maxi)
                             maxi = i;
                         break;
@@ -265,32 +288,38 @@ void tcp_ser(int listenfd, struct sockaddr* serverInfo, socklen_t len){
                     close(connfd);
                 }
                 else{
-                    //wait for second datalink connection
+                    //send for second datalink connection
                     char code[MSGLINE];
                     memset(code, 0, MSGLINE);
                     sprintf(code, "%d", i);
                     write(connfd, code, strlen(code));
-
+                    printf("%s\n", code);
                     client_ID[i].len = clientlen;
                     client_ID[i].info = clientInfo;
                     FD_SET(connfd, &allset);
+                    fd_table[connfd] = true;
                 }       
                 if((--nready) <= 0)
                     continue;
             }//end of FD_ISSET(listenfd...)
             
             for(i = 0; i <= maxi; i++){
-                if(client_ID[i].fd < 0)
+                if((client_ID[i].fd == -1))
                     continue;
                 else{
+                    
                     if(FD_ISSET(client_ID[i].fd, &rset)){
                         if((n=read(client_ID[i].fd, client_msg, MSGLINE)) == 0){
                             printf("[Status] %s has left the server\n", client_ID[i].name);
-                            FD_CLR(client_ID[i].fd, &allset);
+                            
+                            
+                            fd_table[client_ID[i].datafd] = false;
+                            fd_table[client_ID[i].fd] = false;
                             
                             close(client_ID[i].datafd);
                             close(client_ID[i].fd);
-                            
+                            FD_CLR(client_ID[i].fd, &allset);
+
                             clear_data(i);
                         }
                         else{
@@ -320,6 +349,8 @@ void tcp_ser(int listenfd, struct sockaddr* serverInfo, socklen_t len){
                                     client_ID[i].box_num = j;
                                     total_box++;
                                 }
+
+                                
                             }
                             else if(c_msg == 1){
                                 strcpy(temp, client_ID[i].route);
@@ -331,9 +362,14 @@ void tcp_ser(int listenfd, struct sockaddr* serverInfo, socklen_t len){
                                     exit(-8);
                                 }  
                                 client_ID[i].ok_to_read = true;
+                                //printf("Welcome, socket = %d, datafd = %d\n", client_ID[i].fd, client_ID[i].datafd);
                             }
                             else if(c_msg == 3){
+                                printf("[Combine] Data link of last connection\n");
                                 FD_CLR(client_ID[i].fd, &allset);
+                                
+                                fd_table[client_ID[i].fd] = false;
+                    
                                 clear_data(i);
                             }
                         }
@@ -376,6 +412,7 @@ void tcp_ser(int listenfd, struct sockaddr* serverInfo, socklen_t len){
 
                     if(client_ID[i].ifile != NULL){
                         if(FD_ISSET(fileno(client_ID[i].ifile), &rset)){
+                            //printf("%d buffer = %d\n", client_ID[i].fd, (&client_ID[i].to[MAXLINE])-client_ID[i].toiptr);
                             if((n=read(fileno(client_ID[i].ifile), client_ID[i].toiptr, (&client_ID[i].to[MAXLINE])-client_ID[i].toiptr )) < 0){
                                 if(errno != EWOULDBLOCK){
                                     printf("[Error] Failed in reading file data from client\n");
@@ -383,6 +420,7 @@ void tcp_ser(int listenfd, struct sockaddr* serverInfo, socklen_t len){
                                 }   
                             }
                             else{
+                                //printf("read n = %d from file\n", n);
                                 client_ID[i].toiptr += n;
                                 client_ID[i].f_total_read += n;
 
@@ -390,7 +428,11 @@ void tcp_ser(int listenfd, struct sockaddr* serverInfo, socklen_t len){
                                 int temp_num2 = client_ID[i].file_num;
                                 if(client_ID[i].f_total_read == client_box_status[temp_num].box_file_size[temp_num2]){
                                     printf("[Status] Read file <%s> complete\n", client_box_status[temp_num].file_name[temp_num2]);
-                                    client_ID[i].f_total_read = 0;   
+                                    client_ID[i].f_total_read = 0;  
+                                    
+                                    fd_table[fileno(client_ID[i].ifile)] = false;
+                                    printf("ifile close %d\n", fclose(client_ID[i].ifile));
+
                                 }
                                 
                                 //FD_SET(client_ID[i].datafd, &wset);
@@ -426,7 +468,9 @@ void tcp_ser(int listenfd, struct sockaddr* serverInfo, socklen_t len){
                                 if(client_ID[i].file_size == client_ID[i].total_size){
                                     printf("[Status] Closing client <%s> file <%s>\n", client_ID[i].name, client_ID[i].fname);
                                     client_ID[i].file_size = 0;
-                                    fclose(client_ID[i].ofile);
+                                    
+                                    fd_table[fileno(client_ID[i].ofile)] = false;
+                                    printf("ofile close = %d\n", fclose(client_ID[i].ofile));
 
                                     //update box_status
                                     int temp_num = client_ID[i].box_num;
@@ -457,7 +501,7 @@ void tcp_ser(int listenfd, struct sockaddr* serverInfo, socklen_t len){
                     if(FD_ISSET(client_ID[i].datafd, &wset)){
                         int temp_num = client_ID[i].box_num;
                         int temp_num2 = client_ID[i].file_num;
-
+                        //printf("%d, step = %d\n", client_ID[i].fd, client_ID[i].send_step);
                         if(client_ID[i].send_step == 0){
                             memset(server_msg, 0, MSGLINE);
                             
@@ -490,18 +534,20 @@ void tcp_ser(int listenfd, struct sockaddr* serverInfo, socklen_t len){
                             puts("");*/
 
                             if((nwritten=write(client_ID[i].fd, server_msg, total_len)) < 0){
+                                printf("[Warning] client probably sleeping\n");
                                 if(errno != EWOULDBLOCK){
-                                    printf("!!!!!\n");
                                     printf("[Error] Fail during write\n");
                                     exit(-9);
                                 }
                             }
                             else{
+                                printf("nwrite = %d\n", nwritten);
+                                printf("pass\n");
                                 client_ID[i].send_step = 1;
                                 //read(client_ID[i].fd, server_msg, MSGLINE);
                             }  
                         }   
-                        else if(client_ID[i].send_step == 1){
+                        else if(client_ID[i].send_step == 1){ 
                             if((n=(client_ID[i].toiptr-client_ID[i].tooptr)) > 0){
                                 
                                 if((nwritten=write(client_ID[i].datafd, client_ID[i].tooptr, n)) < 0){
@@ -522,16 +568,23 @@ void tcp_ser(int listenfd, struct sockaddr* serverInfo, socklen_t len){
                                     }
                                         
                                     if(client_ID[i].f_total_send == client_box_status[temp_num].box_file_size[temp_num2]){
-                                        client_ID[i].send_step = 2;
-                                        printf("step 1 done\n");
+                                        printf("buffer =  %d\n", (client_ID[i].toiptr-client_ID[i].tooptr));
                                         
 
+                                        printf("[Status] File %s sent\n", client_box_status[temp_num].file_name[temp_num2]);
+                            
+                                        client_ID[i].f_total_send = 0;
+                                        client_ID[i].send_step = -1;
+                                        //client_ID[i].ok_to_open = true;
+                                        client_ID[i].ifile = NULL;
+                                        
+                                        client_ID[i].file_sent[temp_num2] = client_box_status[temp_num].file_status[temp_num2];
                                     }
                                                 
                                 }
                             }
                         }
-                        else if(client_ID[i].send_step == 2){
+                       /* else if(client_ID[i].send_step == 2){
                             memset(server_msg, 0, MSGLINE);
                             strcpy(server_msg, "/end");
                             printf("step 2\n");
@@ -548,7 +601,7 @@ void tcp_ser(int listenfd, struct sockaddr* serverInfo, socklen_t len){
                             client_ID[i].ok_to_open = true;
 
                             client_ID[i].file_sent[temp_num2] = client_box_status[temp_num].file_status[temp_num2];
-                        }
+                        }*/
 
                         if((--nready) <= 0)
                             break;
@@ -573,6 +626,7 @@ int msg_check(char *msg, int current, int num){
     const char codeword1[HEADER] = "/file";
     const char codeword2[HEADER] = "/end";
     const char codeword3[HEADER] = "/link";
+    const char codeword4[HEADER] = "/recv";
 
     int i, check_count = 0;
     bool check_space = false;
@@ -605,6 +659,7 @@ int msg_check(char *msg, int current, int num){
         return 0;
     }
     else if(!strcmp(input, codeword1)){
+        memset(client_ID[current].fname, 0, NAMELEN);
         strcpy(client_ID[current].fname, input2);
         write(client_ID[current].fd, "file name received\n", 19);
         client_ID[current].total_size = atoi(input3);
@@ -613,7 +668,7 @@ int msg_check(char *msg, int current, int num){
     else if(!strcmp(input, codeword2)){
         if(!strcmp(input2, client_ID[current].fname))
             client_ID[current].f_end = true;
-        else{
+        else{ 
             printf("[Error] File name not the same\n");
             exit(-8);
         }
@@ -628,6 +683,16 @@ int msg_check(char *msg, int current, int num){
         fcntl(client_ID[num].datafd, F_SETFL, val | O_NONBLOCK);
 
         return 3;
+    }
+    else if(!strcmp(input, codeword4)){
+        if(!strcmp(input2, client_ID[current].fname)){
+            printf("[Status] Recv, ok_to_open is on now\n");
+            client_ID[current].ok_to_open = true;
+        }
+        else{
+            printf("[Error] Wrong file name\n");
+            exit(-1);
+        }
     }
     else{
         printf("[Error] Message unknown\n");
@@ -660,8 +725,10 @@ void clear_data(int current){
     for(i = 0; i < NUM_FILE; i++){
         client_ID[current].file_sent[i] = 0;
     }
-
-    client_ID[current].fd = -1;
     client_ID[current].datafd = -1;
+  
+    client_ID[current].fd = -1;
+    
+
     return;
 }

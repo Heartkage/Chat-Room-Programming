@@ -11,6 +11,7 @@
 #include<signal.h>
 #include<sys/stat.h>
 #include<sys/types.h>
+#include<time.h>
 
 #define HEADER 8
 #define MSGLINE 100
@@ -265,7 +266,7 @@ void upload_file(int sockfd, int datafd){
 void download_file(int sockfd, int datafd){
     
     FILE *ofile;
-    int current_len = 0, n, nwritten, temp_count = 1;
+    int current_len = 0, n, nwritten, temp_count;
     char server_msg[MAXLINE];
     char temp_route[MSGLINE];
     memset(temp_route, 0, MSGLINE);
@@ -281,7 +282,7 @@ void download_file(int sockfd, int datafd){
     }
 
     printf("Downloading file: %s\n", value);
-    printf("Progress:[");
+    
     while(current_len != file_len){
         memset(server_msg, 0, MAXLINE);
         
@@ -298,18 +299,34 @@ void download_file(int sockfd, int datafd){
         else{
             nwritten = fwrite(server_msg, sizeof(char), n, ofile);
             current_len += nwritten;
-            
-            while((file_len*temp_count) <= (22*current_len)){
-                temp_count++;
-                printf("#");
+
+            printf("Progress:[");
+            for(temp_count = 1; temp_count <= 22 ; temp_count++){
+                if(file_len*temp_count <= (22*current_len))
+                    printf("#");
+                else
+                    printf(" ");
             }
+            
+            if(current_len != file_len)
+                printf("]\r");
+            else
+                printf("]\n");
         }
     }
-    printf("]\n");
-    
 
-    memset(server_msg, 0, MAXLINE);
-    read(sockfd, server_msg, 4);
+    memset(server_msg, 0, MSGLINE);
+    strcpy(server_msg, "/recv");
+    int i;
+    for(i = 0; i < strlen(value); i++)
+        server_msg[HEADER+i] = value[i];
+
+    write(sockfd, server_msg, HEADER+strlen(value));
+
+    printf("Download %s complete!\n", value);
+    fclose(ofile);
+
+   /* memset(server_msg, 0, MAXLINE);
    
     //printf("%s", server_msg);
     if(!strcmp(server_msg, "/end")){
@@ -319,13 +336,33 @@ void download_file(int sockfd, int datafd){
     else{
         printf("[Error] /end didn't received\n");
         exit(-3);
-    }
+    }*/
     
     return;
 }
 
 void process_sleep(int sec){
+    int i = 0, counter = 1;
+    clock_t start_tick;
+    clock_t current_tick;
+    
+    printf("Client starts to sleep\n");
 
+    start_tick = clock() / CLOCKS_PER_SEC;
+    while(1){
+        current_tick = clock() / CLOCKS_PER_SEC;
+
+        if(current_tick-start_tick == sec+1){
+            break;
+        }
+        else if(current_tick-start_tick == counter){
+            printf("Sleep %d\n", counter);
+            counter++;
+        }
+    }
+    printf("Client wakes up\n");
+
+    return;
 }
 
 int msg_check(char *words){
@@ -374,7 +411,7 @@ int msg_check2(char *msg, int num){
     
     const char codeword0[HEADER] = "/file";
 
-    printf("hello\n");
+    //printf("hello\n");
     
     int i, check_count = 0;
     bool check_space = false;
@@ -392,6 +429,7 @@ int msg_check2(char *msg, int num){
     temp[0] = input[6];
     temp[1] = input[7];
     
+
     printf("amount = %d\n", atoi(temp));
     for(i = HEADER; i < atoi(temp); i++){
         if(msg[i] == ' '){
