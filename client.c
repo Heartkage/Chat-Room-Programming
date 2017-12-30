@@ -16,12 +16,14 @@
 #define MSGLINE 100
 #define MAXLINE 1000
 
-
+int file_len = 0;
 char value[MAXLINE];
+char route[MSGLINE];
 int msg_check(char*);
+int msg_check2(char*, int);
 void str_cli(int, int);
 void upload_file(int, int);
-void download_file(int);
+void download_file(int, int);
 void process_sleep(int);
 
 int main(int argc, char *argv[]){
@@ -54,6 +56,7 @@ int main(int argc, char *argv[]){
     datalink.sin_addr.s_addr = inet_addr(argv[1]);
     datalink.sin_port = htons(atoi(argv[2]));
 
+    memset(route, 0, MSGLINE);
     int i;
     char to[MSGLINE], temp2[MSGLINE];
     //connect and read first msg
@@ -62,7 +65,9 @@ int main(int argc, char *argv[]){
         exit(-3);
     }
     read(sockfd, temp2, MSGLINE);
-    printf("%s\n", temp2);
+    //printf("%s\n", temp2);
+    strcpy(route, "temp");
+    strcat(route, temp2);
 
     //make datalink connection and read first msg
     if((connect(datafd, (struct sockaddr *)&datalink, sizeof(datalink))) < 0){
@@ -70,7 +75,7 @@ int main(int argc, char *argv[]){
         exit(-3);
     }
     read(datafd, to, MSGLINE);
-
+    
     //send datalink to server
     memset(to, 0, MSGLINE);
     strcpy(to, "/link");
@@ -84,7 +89,9 @@ int main(int argc, char *argv[]){
     for(i = 0; i < strlen(argv[3]); i++)
         to[i+HEADER] = argv[3][i];
     write(sockfd, to, (HEADER+strlen(argv[3])));
-        
+    
+    mkdir(route, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+    
     printf("Welcome to the dropbox-like server!: %s\n", argv[3]);
 
     str_cli(sockfd, datafd);
@@ -114,7 +121,7 @@ void str_cli(int sockfd, int datafd){
         nready = select(maxfd, &rset, NULL, NULL, NULL);
         while(nready){
             int n;
-            memset(input, 0, MAXLINE);
+            memset(input, 0, MSGLINE);
 
             if(FD_ISSET(sockfd, &rset)){
                 if((n=read(sockfd, input, MSGLINE)) == 0){
@@ -127,12 +134,10 @@ void str_cli(int sockfd, int datafd){
                     exit(-4);
                 }
                 else{
-                    int check = msg_check(input);
-                    
+                    int check = msg_check2(input, n);
+        
                     if(check == 0)
-                        write(fileno(stdout), input, n);
-                    else if(check == 4)
-                        download_file(sockfd);
+                        download_file(sockfd, datafd);
                     else{
                         printf("[Error] Server msg undefined\n");
                         exit(-4);
@@ -175,7 +180,7 @@ void upload_file(int sockfd, int datafd){
     char msg2[MSGLINE];
     printf("%s\n", value);
     FILE *ifile = fopen(value, "rb");
-
+    
     if(ifile == NULL){
         printf("[Error] Fail in opening file %s\n", value);
         exit(-5);
@@ -211,6 +216,7 @@ void upload_file(int sockfd, int datafd){
     puts("");
     write(sockfd, msg, HEADER+strlen(value)+1+strlen(msg2));
     printf("Uploading file: %s\n", value);
+    //warning
     read(sockfd, msg2, MSGLINE);  
 
     //send file data
@@ -256,9 +262,66 @@ void upload_file(int sockfd, int datafd){
     return;
 }
 
-void download_file(int sockfd){
+void download_file(int sockfd, int datafd){
+    
+    FILE *ofile;
+    int current_len = 0, n, nwritten, temp_count = 1;
+    char server_msg[MAXLINE];
+    char temp_route[MSGLINE];
+    memset(temp_route, 0, MSGLINE);
+    strcpy(temp_route, route);
+    strcat(temp_route, "/");
+    strcat(temp_route, value);
 
+    //write(sockfd, "ok", 2);
+    
+    if((ofile=fopen(temp_route, "wb")) == NULL){
+        printf("[Error] Fail in opening output file\n");
+        exit(-1);
+    }
 
+    printf("Downloading file: %s\n", value);
+    printf("Progress:[");
+    while(current_len != file_len){
+        memset(server_msg, 0, MAXLINE);
+        
+        int amount;
+        if((file_len-current_len) < MAXLINE)
+            amount = file_len-current_len;
+        else
+            amount = MAXLINE;
+
+        if((n=read(datafd, server_msg, amount)) <= 0){
+            printf("[Error] Something wrong with server\n");
+            exit(-2);
+        }
+        else{
+            nwritten = fwrite(server_msg, sizeof(char), n, ofile);
+            current_len += nwritten;
+            
+            while((file_len*temp_count) <= (22*current_len)){
+                temp_count++;
+                printf("#");
+            }
+        }
+    }
+    printf("]\n");
+    
+
+    memset(server_msg, 0, MAXLINE);
+    read(sockfd, server_msg, 4);
+   
+    //printf("%s", server_msg);
+    if(!strcmp(server_msg, "/end")){
+        printf("Download %s complete!\n", value);
+        fclose(ofile);
+    }
+    else{
+        printf("[Error] /end didn't received\n");
+        exit(-3);
+    }
+    
+    return;
 }
 
 void process_sleep(int sec){
@@ -269,7 +332,6 @@ int msg_check(char *words){
     const char codeword1[HEADER] = "/put";
     const char codeword2[HEADER] = "/sleep";
     const char codeword3[HEADER] = "/exit";
-    const char codeword4[HEADER] = "/file";
     
     memset(value, 0, MAXLINE);
     
@@ -302,16 +364,58 @@ int msg_check(char *words){
     }
     else if(!strcmp(input, codeword3))
         return 3;
-    else if(!strcmp(input, codeword4)){
-        temp = strtok(NULL, "\n");
-        if(temp != NULL)
-            strcpy(value, temp);
-        else
-            exit(-100);
-        return 4;
-    }
     else{
         printf("[Warning] Unknown input\n");
         return -1;
     }
+}
+
+int msg_check2(char *msg, int num){
+    
+    const char codeword0[HEADER] = "/file";
+
+    printf("hello\n");
+    
+    int i, check_count = 0;
+    bool check_space = false;
+    char input[HEADER], input2[MSGLINE], input3[MSGLINE];
+    char temp[5];
+    memset(input, 0, HEADER);
+    memset(input2, 0, MSGLINE);
+    memset(input3, 0, MSGLINE);
+    memset(temp, 0, 5);
+
+    for(i = 0; i < HEADER; i++)
+        input[i] = msg[i];
+
+    //len of the current packet
+    temp[0] = input[6];
+    temp[1] = input[7];
+    
+    printf("amount = %d\n", atoi(temp));
+    for(i = HEADER; i < atoi(temp); i++){
+        if(msg[i] == ' '){
+            check_space = true;
+            check_count = i+1;
+            continue;
+        }
+        if(check_space){
+            input3[i-check_count] = msg[i];
+        }
+        else
+            input2[i-HEADER] = msg[i];
+    }
+
+    printf("(1):%s, ", input);
+    printf("(2):%s, ", input2);
+    printf("(3):%s\n", input3);
+    
+    if(!strcmp(input, codeword0)){
+        memset(value, 0, MAXLINE);
+        strcpy(value, input2);
+        file_len = atoi(input3);
+        return 0;
+    }
+
+    return -1;
 }
